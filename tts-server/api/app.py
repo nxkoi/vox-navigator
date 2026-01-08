@@ -1,18 +1,15 @@
 """
-Main FastAPI application for Vox Navigator TTS server.
+FastAPI application exposing the local XTTS engine.
 
-Handles:
-- HTTP API endpoints
-- Request/response handling
-- Server lifecycle management
+Minimal HTTP API that wires POST /tts → EngineManager.synthesize()
 """
 
 import os
 import sys
 from pathlib import Path
 
-# Add current directory to path to allow imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory to path to allow imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -21,6 +18,7 @@ from pydantic import BaseModel, Field
 from core.engine_manager import EngineManager
 from core.errors import SynthesisError, EngineLoadError, TTSError
 
+# Initialize FastAPI app
 app = FastAPI(title="Vox Navigator TTS Server")
 
 # Shared EngineManager instance (singleton)
@@ -121,3 +119,26 @@ def health():
             "status": "unhealthy",
             "error": f"{type(e).__name__}: {e}"
         }
+
+
+if __name__ == "__main__":
+    """
+    Run the FastAPI application with uvicorn.
+    
+    Usage:
+        python api/app.py
+        
+    Or with uvicorn directly:
+        uvicorn api.app:app --host 127.0.0.1 --port 8000
+    """
+    import uvicorn
+    
+    # Bind to localhost only (127.0.0.1)
+    # Port 8000 is the default FastAPI port
+    uvicorn.run(
+        "api.app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,  # Disable auto-reload for production-like behavior
+        log_level="info"
+    )

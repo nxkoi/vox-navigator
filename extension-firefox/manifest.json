@@ -1,22 +1,23 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Vox Navigator",
   "version": "0.1.0",
   "description": "Local-first text-to-speech extension for Firefox",
+  
   "permissions": [
     "contextMenus",
     "activeTab",
-    "storage"
+    "scripting"
   ],
+  
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  
   "background": {
     "scripts": ["background.js"]
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
-    }
-  ],
+  
   "icons": {
     "48": "icons/icon-48.png",
     "96": "icons/icon-96.png"

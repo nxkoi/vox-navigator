@@ -59,7 +59,7 @@ def test_basic_tts_pipeline():
     print()
     
     # Test text - short and neutral
-    test_text = "Hello. This is a test of the local text to speech system."
+    test_text = "Olá, este é um teste de conversão de texto para fala."
     
     print(f"Test text: {test_text}")
     print()

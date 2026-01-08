@@ -209,30 +209,57 @@ class EngineManager:
         filename = f"tts_{timestamp}_{text_hash}.wav"
         output_path = os.path.join(output_dir, filename)
         
-        # Synthesize audio (implementation will be added later)
-        # For now, this is a placeholder that demonstrates the interface
+        # Synthesize audio using the engine
         try:
-            # TODO: Call engine.synthesize() and write to file
-            # audio_data = engine.synthesize(text)
-            # with open(output_path, 'wb') as f:
-            #     f.write(audio_data)
+            # Call engine.synthesize() to perform actual TTS synthesis
+            audio_path = engine.synthesize(text=text, output_path=output_path)
             
-            # Placeholder: create empty file to demonstrate interface
-            # This will be replaced with actual synthesis
-            with open(output_path, 'wb') as f:
-                f.write(b'')  # Placeholder
+            logger.debug(f"Audio file created: {audio_path}")
+            return audio_path
             
-            logger.debug(f"Audio file created: {output_path}")
-            return output_path
-            
-        except Exception as e:
-            # Clean up partial file if it exists
-            if os.path.exists(output_path):
+        except ImportError as e:
+            # Só é erro de instalação se o módulo TTS não existir
+            if e.name == "TTS" or e.name.startswith("TTS."):
+                raise EngineLoadError(
+                    "Coqui TTS library not installed. "
+                    "Install with: pip install TTS"
+                ) from e
+
+            # Qualquer outro ImportError é erro REAL de runtime
+            raise EngineLoadError(
+                f"XTTS failed during import phase: {type(e).__name__}: {e}"
+            ) from e
+
+
+        except SynthesisError:
+            # Erro de síntese real → propagar
+            if 'output_path' in locals() and os.path.exists(output_path):
                 try:
                     os.remove(output_path)
                 except Exception:
                     pass
-            raise SynthesisError(f"Synthesis failed: {e}") from e
+            raise
+
+        except EngineLoadError:
+            # Erro de carregamento real → propagar
+            if 'output_path' in locals() and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+            raise
+
+        except Exception as e:
+            # ERRO REAL NÃO RELACIONADO À INSTALAÇÃO
+            if 'output_path' in locals() and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+
+            raise SynthesisError(
+                f"Unexpected TTS runtime error: {type(e).__name__}: {e}"
+            ) from e
     
     def is_initialized(self) -> bool:
         """

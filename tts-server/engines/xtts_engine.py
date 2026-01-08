@@ -57,6 +57,14 @@ class XTTSEngine(BaseTTSEngine):
         self._tts_model = None
         self._torch_device = self._map_device(device)
         self._model_name = "tts_models/multilingual/multi-dataset/xtts_v2"
+        self._default_speaker = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "assets",
+            "speakers",
+            "default_pt.wav"
+        )
+        self._default_speaker = os.path.abspath(self._default_speaker)
     
     def _map_device(self, device: str) -> torch.device:
         """
@@ -107,27 +115,40 @@ class XTTSEngine(BaseTTSEngine):
             logger.info(f"Loading XTTS v2 model on device: {self._torch_device}")
             logger.info("This may take a few minutes on first run (model download)...")
             
-            # Initialize TTS with XTTS v2 model
+            # Initialize TTS with XTTS v2 model and device placement
+            # XTTS v2 requires device to be specified during initialization
+            device_str = str(self._torch_device)
             self._tts_model = TTS(
                 model_name=self._model_name,
-                progress_bar=True
+                progress_bar=True,
+                gpu=(device_str != "cpu")
             )
             
-            # Move model to appropriate device
-            if hasattr(self._tts_model, 'to'):
-                self._tts_model = self._tts_model.to(str(self._torch_device))
+            # Ensure model components are on the correct device
+            # The TTS API handles device placement internally, but we verify
+            if hasattr(self._tts_model, 'synthesizer') and hasattr(self._tts_model.synthesizer, 'to'):
+                self._tts_model.synthesizer.to(device_str)
             
             self._model_loaded = True
             logger.info(f"XTTS v2 model loaded successfully on {self._torch_device}")
             
         except ImportError as e:
+            # Só é erro de instalação se o próprio módulo TTS não existir
+            if e.name == "TTS" or e.name.startswith("TTS."):
+                raise EngineLoadError(
+                    "Coqui TTS library not installed. Install with: pip install TTS"
+                ) from e
+
+            # Qualquer outro ImportError é erro REAL do XTTS
             raise EngineLoadError(
-                "Coqui TTS library not installed. "
-                "Install with: pip install TTS"
+                f"XTTS internal ImportError: {type(e).__name__}: {e}"
             ) from e
+
         except Exception as e:
+            # All other exceptions are runtime errors during model loading
+            # Preserve the original error message and type
             raise EngineLoadError(
-                f"Failed to load XTTS v2 model: {e}"
+                f"Failed to load XTTS v2 model: {type(e).__name__}: {e}"
             ) from e
     
     def synthesize(
@@ -136,104 +157,132 @@ class XTTSEngine(BaseTTSEngine):
         output_path: Optional[str] = None
     ) -> str:
         """
-        Synthesize speech from text and return the path to the audio file.
-        
-        This method performs the complete synthesis pipeline:
-        1. Validates input text
-        2. Loads model if not already loaded (lazy loading)
-        3. Generates audio waveform using XTTS v2
-        4. Writes audio to WAV file
-        5. Returns file path
-        
-        Args:
-            text: Input text to synthesize. Must be non-empty.
-            output_path: Optional path where the audio file should be written.
-                       If None, a temporary file is created.
-        
-        Returns:
-            str: Absolute filesystem path to the generated WAV audio file.
-        
-        Raises:
-            SynthesisError: If synthesis fails for any reason
+        Synthesize speech from text using XTTS v2 and return the path to the audio file.
+
+        XTTS v2 is a voice-cloning model and REQUIRES a reference speaker WAV file.
         """
-        # Validate text input
+
+        # 1. Validate text
         self.validate_text(text)
-        
-        # Load model if not already loaded (lazy loading)
+
+        # 2. Load model if needed
         if not self._model_loaded:
             self.load_model()
-        
+
         if self._tts_model is None:
             raise SynthesisError("Model not loaded. Call load_model() first.")
-        
-        # Generate output path if not provided
+
+        # 3. Resolve output path (AFTER model is confirmed loaded)
+        # This ensures we don't create empty files if model loading fails
         if output_path is None:
-            fd, output_path = tempfile.mkstemp(suffix='.wav', prefix='xtts_')
+            fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="xtts_")
             os.close(fd)
         else:
-            # Ensure output directory exists
             output_dir = os.path.dirname(os.path.abspath(output_path))
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.abspath(output_path)
-        
+
+        # 4. Resolve default speaker (use the one defined in __init__)
+        default_speaker = self._default_speaker
+
+        if not os.path.exists(default_speaker):
+            raise SynthesisError(
+                f"Default speaker file not found: {default_speaker}. "
+                "XTTS v2 requires a reference speaker WAV."
+            )
+
+        logger.debug(f"Synthesizing with XTTS v2")
+        logger.debug(f"Text (preview): {text[:50]}")
+        logger.debug(f"Speaker WAV: {default_speaker}")
+        logger.debug(f"Output path: {output_path}")
+        logger.debug(f"Device: {self._torch_device}")
+
         try:
-            logger.debug(f"Synthesizing text: {text[:50]}...")
-            logger.debug(f"Output path: {output_path}")
-            logger.debug(f"Device: {self._torch_device}")
-            
-            # Generate audio waveform using XTTS
-            # tts() returns the audio array, which we'll write using our writer
-            audio_waveform = self._tts_model.tts(
-                text=text,
-                speaker_wav=None,  # Use default voice
-                language="en"  # Default to English, can be made configurable
-            )
-            
-            # Convert to numpy array if needed and ensure it's a 1D array
-            import numpy as np
-            if not isinstance(audio_waveform, np.ndarray):
-                audio_waveform = np.array(audio_waveform)
-            
-            # Flatten to 1D if needed (handle multi-channel audio)
-            if audio_waveform.ndim > 1:
-                audio_waveform = audio_waveform.flatten()
-            
-            # Get sample rate from TTS model (XTTS v2 uses 24000 Hz)
-            # We'll use the model's sample rate or default
-            sample_rate = getattr(self._tts_model, 'output_sample_rate', 24000)
-            
-            # Write audio to WAV file using our audio writer
-            output_path = write_wav(
-                audio_data=audio_waveform,
-                output_path=output_path,
-                sample_rate=sample_rate,
-                channels=1  # Mono
-            )
-            
-            # Verify file was created and is non-empty
+            # 5. Perform XTTS v2 synthesis
+            # IMPORTANT: XTTS must use tts_to_file with speaker_wav
+            try:
+                self._tts_model.tts_to_file(
+                    text=text,
+                    speaker_wav=default_speaker,
+                    language="pt",
+                    file_path=output_path,
+                )
+            except Exception as tts_error:
+                # Preserve the original XTTS runtime error with full context
+                # This could be: invalid speaker_wav, language mismatch, audio backend failure, etc.
+                error_type = type(tts_error).__name__
+                error_msg = str(tts_error)
+                
+                # Provide context-specific error messages for common issues
+                if "speaker" in error_msg.lower() or "wav" in error_msg.lower():
+                    raise SynthesisError(
+                        f"XTTS synthesis failed: Invalid speaker reference. "
+                        f"Error: {error_type}: {error_msg}. "
+                        f"Speaker file: {default_speaker}"
+                    ) from tts_error
+                elif "language" in error_msg.lower():
+                    raise SynthesisError(
+                        f"XTTS synthesis failed: Language error. "
+                        f"Error: {error_type}: {error_msg}. "
+                        f"Requested language: pt-br"
+                    ) from tts_error
+                elif "audio" in error_msg.lower() or "backend" in error_msg.lower():
+                    raise SynthesisError(
+                        f"XTTS synthesis failed: Audio backend error. "
+                        f"Error: {error_type}: {error_msg}"
+                    ) from tts_error
+                else:
+                    # Generic XTTS runtime error - preserve original message and type
+                    raise SynthesisError(
+                        f"XTTS synthesis failed: {error_type}: {error_msg}"
+                    ) from tts_error
+
+            # 6. Validate output file
             if not os.path.exists(output_path):
                 raise SynthesisError(f"Audio file was not created: {output_path}")
-            
+
             file_size = os.path.getsize(output_path)
             if file_size == 0:
-                raise SynthesisError(f"Generated audio file is empty: {output_path}")
-            
-            logger.debug(f"Audio generated successfully: {output_path} ({file_size} bytes)")
-            
+                raise SynthesisError(
+                    f"Generated audio file is empty: {output_path}. "
+                    "XTTS synthesis did not produce audio."
+                )
+
+            logger.debug(
+                f"Audio generated successfully: {output_path} ({file_size} bytes)"
+            )
+
             return output_path
-            
-        except Exception as e:
-            # Clean up partial file on error
-            if os.path.exists(output_path):
+
+        except SynthesisError:
+            # Re-raise SynthesisError as-is (already has proper context)
+            # Cleanup partial file on failure
+            if 'output_path' in locals() and os.path.exists(output_path):
                 try:
                     os.remove(output_path)
                 except Exception:
                     pass
-            
-            if isinstance(e, SynthesisError):
-                raise
-            else:
-                raise SynthesisError(
-                    f"XTTS synthesis failed: {e}"
-                ) from e
+            raise
+        except EngineLoadError:
+            # Re-raise EngineLoadError as-is (model loading failure)
+            # Cleanup partial file on failure
+            if 'output_path' in locals() and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+            raise
+        except Exception as e:
+            # Cleanup partial file on failure
+            if 'output_path' in locals() and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+
+            # Wrap unexpected errors but preserve original type and message
+            raise SynthesisError(
+                f"Unexpected error during XTTS synthesis: {type(e).__name__}: {e}"
+            ) from e
+
