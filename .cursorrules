@@ -1,0 +1,49 @@
+This project is a final, user-facing application.
+
+It is local-first and strictly non-commercial.
+
+All processing must run locally.
+Do not suggest cloud services, SaaS APIs, telemetry, or external servers.
+
+Target stack (do not deviate):
+- Firefox WebExtension
+- Local FastAPI backend
+- GPU-accelerated neural Text-to-Speech
+
+Primary goals:
+- Human-like speech quality
+- Privacy by design
+- Low latency
+- Stable and maintainable code
+
+Coding expectations:
+- Prefer complete, production-ready files
+- Avoid pseudo-code and placeholders
+- Keep architecture simple and explicit
+- Modularize only when it improves clarity
+
+TTS & Audio rules:
+- Neural TTS only
+- Local execution only
+- Browser-native TTS APIs are forbidden
+- Cloud TTS services are forbidden
+- Third-party audio streaming is forbidden
+
+Audio output:
+- Default format: WAV
+- One request generates exactly one audio output
+- Do not apply audio post-processing unless explicitly requested
+- Do not return partial or corrupted audio
+
+GPU usage:
+- Always detect CUDA availability
+- Use GPU when available
+- Fallback to CPU gracefully
+- Never assume GPU presence
+
+Performance:
+- Minimize latency
+- Avoid unnecessary model reloads
+- Load TTS models once at startup
+
+Assume Linux as the primary development and runtime environment.
